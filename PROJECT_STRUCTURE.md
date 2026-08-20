@@ -1,333 +1,156 @@
 # 项目文件架构说明
 
-本文档用于说明当前双目相机项目的文件组织、核心脚本作用，以及数据从采集到标定的流向。
-
-## 目录总览
+## 顶层结构
 
 ```text
 双目相机/
 ├─ stereo_camera.py
 ├─ stereo_calibrate_cct14.py
 ├─ generate_cct14_a4_board.py
-├─ cct14_layout.csv
 ├─ cct14_3x3_A4_60mm.pdf
 ├─ cct14_3x3_A4_60mm.svg
-├─ targets_inkscape.pdf
-├─ CCT14_STEREO_CALIBRATION.md
+├─ cct14_layout.csv
 ├─ README.md
-├─ captures/
-├─ calibration_debug/                 # 运行标定后生成
+├─ CCT14_STEREO_CALIBRATION.md
+├─ PROJECT_STRUCTURE.md
 ├─ CCTDecode/
-├─ 14-Bit-Circular-Coded-Target-master/
-├─ .vscode/
-└─ __pycache__/
+└─ 14-Bit-Circular-Coded-Target-master/
+```
+
+运行后生成但不提交到 Git 的目录：
+
+```text
+captures/
+calibration_debug/
+stereo_cct14.yaml
 ```
 
 ## 核心流程
 
 ```text
-生成 14bit 标定板
-  generate_cct14_a4_board.py
-        |
-        v
-  cct14_3x3_A4_60mm.pdf + cct14_layout.csv
-        |
-        v
-打印标定板并拍摄双目图片
-  stereo_camera.py
-        |
-        v
-  captures/left_*.png + captures/right_*.png
-        |
-        v
-解码编码点并完成双目标定
-  stereo_calibrate_cct14.py
-        |
-        v
-  stereo_cct14.yaml + calibration_debug/
+generate_cct14_a4_board.py
+    -> cct14_3x3_A4_60mm.pdf
+    -> cct14_layout.csv
+
+stereo_camera.py
+    -> captures/left_*.png
+    -> captures/right_*.png
+
+stereo_calibrate_cct14.py
+    -> stereo_cct14.yaml
+    -> calibration_debug/
 ```
 
-## 顶层文件
+## 顶层脚本
 
 ### `stereo_camera.py`
 
-USB 双目相机采集程序，使用 OpenCV 打开相机，使用 PyQt6 显示窗口。
+USB 双目相机采集程序。
 
-主要功能：
+功能：
 
-- 打开双目 USB 相机。
-- 支持左右拼接的单设备模式：`--mode sbs`。
-- 支持左右两个独立摄像头模式：`--mode dual`。
-- 窗口中有“拍照”按钮。
-- 按 `S` 或点击“拍照”保存左右图。
-- 按 `Q`、`Esc` 或关闭窗口退出。
-- 默认保存到 `captures/`。
+- 打开左右拼接双目相机，默认 `--mode sbs --camera 1`
+- 支持两个独立相机模式 `--mode dual`
+- 使用 PyQt6 显示实时预览窗口
+- 点击“拍照”或按 `S` 保存左右图片
+- 按 `Q`、`Esc` 或关闭窗口退出
 
-常用命令：
-
-```powershell
-conda activate db_cam_env
-python stereo_camera.py
-```
-
-列出可用相机编号：
-
-```powershell
-python stereo_camera.py --list
-```
-
-当前项目默认按左右拼接双目相机使用：
-
-```powershell
-python stereo_camera.py --mode sbs --camera 1 --width 2560 --height 720
-```
-
-其中 `2560x720` 表示整幅图像，左右各 `1280x720`。
+默认输出目录是 `captures/`。
 
 ### `generate_cct14_a4_board.py`
 
-14bit 环形编码点标定板生成脚本。
+生成 A4 版 14-bit 环形编码点标定板。
 
-它会调用 `14-Bit-Circular-Coded-Target-master/` 里的代码来生成标定板图案，而不是手写编码点。
+输出：
 
-主要输出：
+- `cct14_3x3_A4_60mm.pdf`：打印用 PDF
+- `cct14_3x3_A4_60mm.svg`：同版 SVG
+- `cct14_layout.csv`：编码点 ID 与物理坐标
 
-- `cct14_3x3_A4_60mm.pdf`：用于打印的 A4 标定板。
-- `cct14_3x3_A4_60mm.svg`：同一标定板的 SVG 源文件。
-- `cct14_layout.csv`：每个编码点的物理坐标和解码 ID。
+当前标定板只保留 9 个编码点，不放标题、说明文字和编号，减少解码误识别。
 
-标定板参数：
+### `stereo_calibrate_cct14.py`
 
-- 纸张：A4 竖版，`210 mm x 297 mm`。
-- 编码点数量：`3 x 3`。
-- 编码点外径：`40 mm`。
-- 圆心间距：横向 `60 mm`，纵向 `60 mm`。
-- PDF 可见内容只保留 9 个编码点，不放标题、说明文字或校验线，避免文字被误识别为编码点。
-- 打印时必须选择 `100%` 或“实际大小”，关闭“适合页面”。
+双目标定主程序。
 
-重新生成标定板：
+功能：
 
-```powershell
-python generate_cct14_a4_board.py
-```
+- 读取 `captures/` 中成对的左右图片
+- 调用 `CCTDecode/CCTDecode/CCTDecodeRelease.py` 解码 14-bit 编码点
+- 根据 `cct14_layout.csv` 匹配真实物理点
+- 使用 OpenCV 完成左右相机单目标定和双目标定
+- 输出 `stereo_cct14.yaml`
+- 输出 `calibration_debug/` 检查图
+
+## 标定板文件
+
+### `cct14_3x3_A4_60mm.pdf`
+
+最终打印文件。打印时选择 `100%` 或“实际大小”，关闭“适合页面”。
+
+### `cct14_3x3_A4_60mm.svg`
+
+PDF 的 SVG 源文件，方便检查图案内容。
 
 ### `cct14_layout.csv`
 
-14bit 标定板布局文件。双目标定时会用它把“解码出来的 ID”转换成“真实世界中的平面坐标”。
+标定板物理布局文件。
 
-列含义：
+字段：
 
 ```text
 id,x_mm,y_mm,target_number,source_code
 ```
 
-当前实际 CSV 中的关键列是：
+含义：
 
-- `id`：CCT 解码程序识别出来的编码 ID。
-- `x_mm`：该点在标定板坐标系中的 X 坐标，单位 mm。
-- `y_mm`：该点在标定板坐标系中的 Y 坐标，单位 mm。
-- `target_number`：在 14bit 编码生成仓库里的目标编号。
-- `source_code`：生成该编码点使用的原始编码值。
+- `id`：解码程序识别出来的 ID
+- `x_mm`、`y_mm`：标定板平面坐标，单位 mm
+- `target_number`：14bit 生成代码中的目标编号
+- `source_code`：原始编码值
 
-注意：如果打印后实际尺寸有缩放，需要根据实际测量结果修改这里的 `x_mm` 和 `y_mm`，否则标定结果会带比例误差。
+## 解码代码
 
-### `stereo_calibrate_cct14.py`
+### `CCTDecode/CCTDecode/CCTDecodeRelease.py`
 
-使用 14bit 环形编码点进行双目标定的主程序。
+环形编码点检测和解码主文件。
 
-主要功能：
+保留的能力：
 
-- 从 `captures/` 读取左右图片对。
-- 调用 `CCTDecode/CCTDecode/CCTDecodeRelease.py` 中的 `CCT_extract()` 解码编码点。
-- 根据 `cct14_layout.csv` 匹配左右图中的同一个物理点。
-- 分别求左右相机内参。
-- 求双目外参 `R/T`。
-- 输出畸变参数、基础矩阵、极线校正矩阵和 `Q` 矩阵。
-- 生成调试图片到 `calibration_debug/`。
+- 二值化图像并提取轮廓
+- 圆度检测
+- 轮廓与拟合椭圆的 IoU 检测
+- 最小中心圆尺寸检测
+- 仿射归一化候选区域
+- 判断是否符合 CCT 中心圆和编码环结构
+- 输出编码 ID 和图像中心坐标
 
-默认运行：
+### `CCTDecode/CCTDecode/DrawCCT.py`
 
-```powershell
-python stereo_calibrate_cct14.py
-```
+只保留 bit 列表和整数编码的转换函数。
 
-主要输入：
+### `CCTDecode/CCTDecode/Support.py`
 
-- `captures/left_*.png`
-- `captures/right_*.png`
-- `cct14_layout.csv`
+只保留解码归一化需要的最小二乘仿射变换函数。
 
-主要输出：
+## 14bit 编码生成代码
 
-- `stereo_cct14.yaml`
-- `calibration_debug/`
+### `14-Bit-Circular-Coded-Target-master/find_codes.py`
 
-可选参数示例：
+生成 14bit 环形编码序列。
 
-```powershell
-python stereo_calibrate_cct14.py --threshold 0.85 --color white
-```
+### `14-Bit-Circular-Coded-Target-master/create_target_sheets.py`
 
-当前标定板是黑底白色编码点，所以默认使用：
+根据编码值生成单个 SVG 环形编码点。
 
-```text
---color white
-```
+这个目录里原来的 Inkscape/PDFtk 批量导出逻辑已经删除，因为本项目使用 `generate_cct14_a4_board.py` 和 PyMuPDF 直接生成 PDF。
 
-### `cct14_3x3_A4_60mm.pdf`
+## 已删除的无用内容
 
-最终打印用的 A4 标定板。
+清理掉的内容包括：
 
-打印要求：
-
-- 使用 A4 纸。
-- 打印比例选择 `100%` 或“实际大小”。
-- 关闭“适合页面”“缩小到可打印区域”等自动缩放。
-- 打印后建议直接测量相邻编码点圆心距离，应为 `60 mm`。
-- 建议贴到平整硬板上使用。
-
-### `cct14_3x3_A4_60mm.svg`
-
-标定板的 SVG 文件，便于检查或二次编辑。正常使用时优先打印 PDF。
-
-### `targets_inkscape.pdf`
-
-旧的或外部生成的编码点 PDF 文件。当前 3x3 A4 标定流程优先使用 `cct14_3x3_A4_60mm.pdf`。
-
-### `CCT14_STEREO_CALIBRATION.md`
-
-14bit CCT 双目标定的使用说明，包含：
-
-- 标定板打印注意事项。
-- 拍摄建议。
-- 标定命令。
-- 常见参数调整。
-
-### `README.md`
-
-项目入口说明，包含相机采集和标定的最短使用流程。
-
-## 数据目录
-
-### `captures/`
-
-双目相机采集出来的照片目录。
-
-文件命名方式：
-
-```text
-left_时间戳.png
-right_时间戳.png
-```
-
-左右图通过相同时间戳配对。标定程序会自动寻找同名时间戳的 `left_*` 和 `right_*`。
-
-### `calibration_debug/`
-
-标定程序生成的调试图目录。
-
-每张调试图会标出检测到的环形编码点和对应 ID，用来检查：
-
-- 编码点有没有漏检。
-- ID 是否识别正确。
-- 左右图片中的同一 ID 是否能成功匹配。
-
-如果标定误差偏大，应先检查这个目录里的图片。
-
-### `__pycache__/`
-
-Python 自动生成的缓存目录，可以忽略。它不参与项目逻辑。
-
-### `.vscode/`
-
-VS Code 的本地编辑器配置目录，不属于核心程序。
-
-## 第三方代码目录
-
-### `CCTDecode/`
-
-环形编码点检测和解码代码仓库。
-
-项目中主要使用：
-
-```text
-CCTDecode/CCTDecode/CCTDecodeRelease.py
-```
-
-其中的核心接口是：
-
-```python
-CCT_extract(image, bit, threshold, color)
-```
-
-在本项目中，`stereo_calibrate_cct14.py` 会调用它检测每张左右图里的 14bit 编码点。
-
-### `14-Bit-Circular-Coded-Target-master/`
-
-14bit 环形编码点生成代码仓库。
-
-项目中主要使用：
-
-```text
-14-Bit-Circular-Coded-Target-master/find_codes.py
-14-Bit-Circular-Coded-Target-master/create_target_sheets.py
-```
-
-本项目的 `generate_cct14_a4_board.py` 会从这个目录导入编码生成和绘制函数，用它生成 `3 x 3` A4 标定板。
-
-## 推荐使用顺序
-
-1. 激活环境：
-
-```powershell
-conda activate db_cam_env
-```
-
-2. 打印标定板：
-
-```text
-cct14_3x3_A4_60mm.pdf
-```
-
-3. 采集左右图：
-
-```powershell
-python stereo_camera.py
-```
-
-4. 拍摄 15 到 25 组不同角度、不同距离的双目图片。
-
-5. 执行双目标定：
-
-```powershell
-python stereo_calibrate_cct14.py
-```
-
-6. 检查输出：
-
-```text
-stereo_cct14.yaml
-calibration_debug/
-```
-
-## 标定结果文件
-
-运行 `stereo_calibrate_cct14.py` 后会生成：
-
-```text
-stereo_cct14.yaml
-```
-
-该文件通常包含：
-
-- 左相机内参矩阵。
-- 右相机内参矩阵。
-- 左右相机畸变系数。
-- 双目旋转矩阵 `R`。
-- 双目平移向量 `T`。
-- 本质矩阵 `E`。
-- 基础矩阵 `F`。
-- 双目校正矩阵。
-- 重投影矩阵 `Q`。
-
-后续如果要做视差图、深度图或三维重建，就会继续使用这个 YAML 文件。
+- CCTDecode 原仓库的视频演示脚本
+- CCTDecode 原仓库的 data/result 示例图片
+- Python `__pycache__` 缓存
+- 旧的 `targets_inkscape.pdf`
+- 与当前裁剪后代码不一致的第三方 README

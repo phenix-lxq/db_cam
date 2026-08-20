@@ -1,122 +1,68 @@
-#!/usr/bin/env python3
+"""生成环形编码点可用的二进制编码序列。
 
-'''
-Generate codes for circular coded photogrammetry targets.
+这里保留原 14-Bit-Circular-Coded-Target 仓库的筛选规则，只删掉独立命令行
+打印入口。本项目通过 `create_target_sheets.CODES` 间接调用 `generate_codes(14)`。
+"""
 
-Implementation of coding scheme of (expired) patent DE19733466A1.
-https://patents.google.com/patent/DE19733466A1/
-https://register.dpma.de/DPMAregister/pat/register?AKZ=197334660
 
-Matthew Petroff <https://mpetroff.net>, 2018
+def bitwise_rotate_left(value, shift, total_bits):
+    """把 total_bits 位整数循环左移。"""
+    mask = 2**total_bits - 1
+    return ((value << shift) & mask) | ((value & mask) >> (total_bits - shift))
 
-This script is released into the public domain using the CC0 1.0 Public
-Domain Dedication: https://creativecommons.org/publicdomain/zero/1.0/
-'''
 
-import argparse
-
-def bitwise_rotate_left(val, bits, total_bits):
-    '''
-    Perform a bitwise rotation to the left.
-    '''
-    return (val << bits) & (2**total_bits-1) \
-        | ((val & (2**total_bits-1)) >> total_bits-bits)
-
-def find_smallest_rotation(val, total_bits):
-    '''
-    Check all bitwise rotations to find smallest representation.
-    '''
-    smallest = val
-    for i in range(1, total_bits):
-        smallest = min(bitwise_rotate_left(val, i, total_bits), smallest)
+def find_smallest_rotation(value, total_bits):
+    """返回所有循环旋转中数值最小的那个编码。"""
+    smallest = value
+    for shift in range(1, total_bits):
+        smallest = min(bitwise_rotate_left(value, shift, total_bits), smallest)
     return smallest
 
-def calc_parity(val):
-    '''
-    Returns True if even parity, else False.
-    '''
+
+def calc_parity(value):
+    """偶校验返回 True，奇校验返回 False。"""
     parity = True
-    while val:
+    while value:
         parity = not parity
-        val = val & (val - 1)
+        value = value & (value - 1)
     return parity
 
-def count_bit_transitions(val):
-    '''
-    Count number of bit transitions.
-    '''
+
+def count_bit_transitions(value):
+    """统计从 0 到 1 的跳变次数，保持原仓库定义。"""
     transitions = 0
-    prev_bit = 0
-    while val:
-        new_bit = val & 1
-        if new_bit > prev_bit:
+    previous_bit = 0
+    while value:
+        current_bit = value & 1
+        if current_bit > previous_bit:
             transitions += 1
-        prev_bit = new_bit
-        val >>= 1
+        previous_bit = current_bit
+        value >>= 1
     return transitions
 
-def generate_codes(bits, transitions=None):
-    '''
-    Generate codes for a given number of bits and, optionally, a given number
-    of transitions. Number of bits should be even.
-    '''
-    codes = []
-    # Codes all start with 0 and end with 1, allowing us to check fewer numbers
-    for i in range(2**(bits-2)):
-        # Add 1 bit to end
-        code = (i << 1) + 1
 
-        # Perform cyclic shift to minimize value
+def generate_codes(bits, transitions=None):
+    """生成指定 bit 数的环形编码。
+
+    筛选条件：
+
+    - 旋转等价编码只保留最小值。
+    - 编码必须满足偶校验。
+    - 至少有一对相对扇区同时为 1。
+    - 如果指定 transitions，则跳变次数必须一致。
+    """
+    codes = []
+    for value in range(2 ** (bits - 2)):
+        code = (value << 1) + 1
         code = find_smallest_rotation(code, bits)
 
-        # Check which pairs of opposite segments are both 1
         half_bits = bits >> 1
-        diff = (code & (2**half_bits-1)) \
-            & ((code & ((2**half_bits-1) << half_bits)) >> half_bits)
+        opposite_mask = 2**half_bits - 1
+        opposite_pair = (code & opposite_mask) & ((code & (opposite_mask << half_bits)) >> half_bits)
 
-        # Find parity
         parity = calc_parity(code)
+        transition_count = count_bit_transitions(code) if transitions else None
 
-        # Count number of transitions
-        num_transitions = count_bit_transitions(code) if transitions else None
-
-        # Find unique codes with even parity and at least one pair of opposite
-        # segments that are both 1 (and correct number of transitions,
-        # if applicable)
-        if parity and diff > 0 and transitions == num_transitions \
-            and code not in codes:
+        if parity and opposite_pair > 0 and transitions == transition_count and code not in codes:
             codes.append(code)
-
     return codes
-
-def main():
-    '''
-    Process arguments and generate codes.
-    '''
-    parser = argparse.ArgumentParser( \
-        description='Generate codes for circular coded photogrammetry targets.')
-    parser.add_argument('bits', metavar='N', type=int, nargs=1,
-                        help='Number of bits in target (even integer)')
-    parser.add_argument('--transitions', metavar='T', type=int, nargs=1,
-                        help='Number of transitions')
-    args = parser.parse_args()
-    if args.bits[0] % 2 != 0:
-        raise ValueError('Number of bits must be even!')
-    if args.bits[0] <= 0:
-        raise ValueError('Number of bits must be positive!')
-    transitions = None
-    if args.transitions:
-        if args.transitions[0] <= 0:
-            raise ValueError('Number of transitions must be positive!')
-        transitions = args.transitions[0]
-
-    codes = generate_codes(args.bits[0], transitions)
-    print('Codes (as binary):')
-    for code in codes:
-        print('{:0{width}b}'.format(code, width=args.bits[0]))
-    print('\nCodes (as integer):')
-    print(codes)
-    print('\nNumber of codes:', len(codes))
-
-if __name__ == '__main__':
-    main()

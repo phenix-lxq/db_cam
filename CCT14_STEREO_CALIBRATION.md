@@ -1,59 +1,79 @@
-# 14-bit 环形编码点双目标定
+# 14-bit 环形编码点双目标定流程
 
-## 1. 准备标定板布局
+## 1. 打印标定板
 
-项目已使用 `14-Bit-Circular-Coded-Target-master` 的 `generate_codes()` 和
-`add_target()` 生成 `cct14_3x3_A4_60mm.pdf`。它采用该仓库原生的黑底白码样式，
-其中包含 3×3 个 14-bit 编码点：
+使用当前目录下的：
 
-- 编码点外径：40 mm。
-- 水平圆心间距：60 mm。
-- 垂直圆心间距：60 mm。
-- 九点圆心区域：120×120 mm。
-- 物理坐标已写入 `cct14_layout.csv`。
+```text
+cct14_3x3_A4_60mm.pdf
+```
 
-打印时必须选择“实际大小”或“100%”，关闭“适合页面/缩放页面”。打印后用尺子
-测量相邻编码点圆心间距，它应为 60 mm。建议将纸张平整粘贴在玻璃、亚克力板
-或其他不会弯曲的平板上。若打印机造成尺寸变化，应测量实际圆心距离并修改
-`cct14_layout.csv`，不能继续使用名义尺寸。
+标定板参数：
 
-需要重新生成 PDF 时运行：
+- A4 竖版：`210 mm x 297 mm`
+- 编码点数量：`3 x 3`
+- 编码点外径：`40 mm`
+- 相邻圆心间距：横向 `60 mm`，纵向 `60 mm`
+- 编码点样式：黑底白码
+- 物理坐标文件：`cct14_layout.csv`
+
+打印时必须选择“实际大小”或 `100%`，关闭“适合页面/缩放页面”。打印后测量相邻编码点圆心间距，应为 `60 mm`。如果实际尺寸有偏差，请按实测值修改 `cct14_layout.csv` 中的 `x_mm` 和 `y_mm`。
+
+建议把纸张平整粘贴在玻璃、亚克力板或其他不易弯曲的平板上。
+
+重新生成 PDF：
 
 ```powershell
 python generate_cct14_a4_board.py
 ```
 
-## 2. 拍摄照片
+## 2. 拍摄标定图片
 
-运行双目采集界面：
+运行采集程序：
 
 ```powershell
 conda activate db_cam_env
 python stereo_camera.py
 ```
 
-点击“拍照”保存图片。建议拍摄 15–25 对，标定板应覆盖画面中央、四角、近处、
-远处，并有不同方向的倾斜。左右图中至少要共同看到 6 个编码点，避免运动模糊、
-反光和过曝。标定期间不要改变焦距、分辨率或左右相机位置。
+拍摄建议：
+
+- 拍 15 到 25 对左右图片。
+- 标定板覆盖画面中心、四角、近处和远处。
+- 每张图里左右相机共同看到至少 6 个编码点。
+- 避免运动模糊、反光和过曝。
+- 标定期间不要改变焦距、分辨率或左右相机位置。
+
+采集图片会保存为：
+
+```text
+captures/left_时间戳.png
+captures/right_时间戳.png
+```
 
 ## 3. 执行标定
 
-当前生成的黑底白色编码点直接使用：
+默认命令：
 
 ```powershell
 python stereo_calibrate_cct14.py
 ```
 
-如果以后改用白底黑色编码点，则使用：
+当前标定板是黑底白码，所以默认参数是：
 
-```powershell
-python stereo_calibrate_cct14.py --color black
+```text
+--color white
 ```
 
-默认读取 `captures` 下由采集程序生成的配对图片，输出：
+如果漏检或误检明显，可以调整：
 
-- `stereo_cct14.yaml`：相机内参、畸变、双目 R/T、E/F、校正矩阵和 Q 矩阵。
-- `calibration_debug`：标有解码 ID 和检测圆的检查图片。
+```powershell
+python stereo_calibrate_cct14.py --threshold 0.9 --min-iou 0.75
+```
 
-若漏检较多，可尝试 `--threshold 0.75` 或 `--threshold 0.9`。应逐张查看
-`calibration_debug`，确保解码 ID 与标定板真实 ID 一致。
+输出文件：
+
+- `stereo_cct14.yaml`：左右相机内参、畸变、双目 R/T、E/F、校正矩阵和 Q 矩阵
+- `calibration_debug/`：带解码 ID 标注的检查图
+
+标定完成后，先查看 `calibration_debug/`，确认每张图中识别到的 ID 和标定板上的真实点一致。
