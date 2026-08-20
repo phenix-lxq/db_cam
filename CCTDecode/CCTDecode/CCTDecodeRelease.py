@@ -9,7 +9,7 @@ import math
 import cv2
 import numpy as np
 
-from DrawCCT import B2I, I2B
+from DrawCCT import B2I, rotation_indices
 from Support import my_getAffineTransform
 
 
@@ -62,13 +62,19 @@ def ellipse_contour_iou(contour, ellipse):
     return 0.0 if union == 0 else intersection / union
 
 
-def sample_binary(image, x, y):
-    """按最近像素读取二值图，越界时返回背景值 0。"""
-    row = round(y)
-    column = round(x)
-    if row < 0 or row >= image.shape[0] or column < 0 or column >= image.shape[1]:
-        return 0
-    return int(image[row, column])
+def sample_binary_points(image, x_points, y_points):
+    """一次性采样多个二值图坐标，返回与输入形状一致的数组。"""
+    rows = np.rint(y_points).astype(np.intp)
+    columns = np.rint(x_points).astype(np.intp)
+    samples = np.zeros(rows.shape, dtype=np.uint8)
+    valid = (
+        (rows >= 0)
+        & (rows < image.shape[0])
+        & (columns >= 0)
+        & (columns < image.shape[1])
+    )
+    samples[valid] = image[rows[valid], columns[valid]]
+    return samples
 
 
 def normalize_cct_roi(image, center_ellipse):
@@ -220,26 +226,42 @@ def CCT_or_not(cct_binary):
     center_y = height / 2
     radius = center_x / 3.0
 
-    inner_samples = []
-    middle_samples = []
-    outer_samples = []
-    for index in range(sample_count):
-        angle = math.radians(10.0 * index)
-        cos_value = math.cos(angle)
-        sin_value = math.sin(angle)
-        inner_samples.append(
-            sample_binary(cct_binary, center_x + 0.5 * radius * cos_value, center_y + 0.5 * radius * sin_value)
-        )
-        middle_samples.append(
-            sample_binary(cct_binary, center_x + 1.5 * radius * cos_value, center_y + 1.5 * radius * sin_value)
-        )
-        outer_samples.append(
-            sample_binary(cct_binary, center_x + 2.5 * radius * cos_value, center_y + 2.5 * radius * sin_value)
-        )
+    angles = np.deg2rad(np.arange(sample_count, dtype=np.float32) * 10.0)
+    unit_x = np.cos(angles)
+    unit_y = np.sin(angles)
+    inner_samples = sample_binary_points(
+        cct_binary,
+        center_x + 0.5 * radius * unit_x,
+        center_y + 0.5 * radius * unit_y,
+    )
+    middle_samples = sample_binary_points(
+        cct_binary,
+        center_x + 1.5 * radius * unit_x,
+        center_y + 1.5 * radius * unit_y,
+    )
+    outer_samples = sample_binary_points(
+        cct_binary,
+        center_x + 2.5 * radius * unit_x,
+        center_y + 2.5 * radius * unit_y,
+    )
 
-    white_center = sum(inner_samples) == sample_count and sum(middle_samples) == 0 and sum(outer_samples) >= 2
-    black_center = sum(inner_samples) == 0 and sum(middle_samples) == sample_count and sum(outer_samples) <= sample_count - 2
+    inner_sum = int(np.sum(inner_samples))
+    middle_sum = int(np.sum(middle_samples))
+    outer_sum = int(np.sum(outer_samples))
+    white_center = inner_sum == sample_count and middle_sum == 0 and outer_sum >= 2
+    black_center = inner_sum == 0 and middle_sum == sample_count and outer_sum <= sample_count - 2
     return white_center or black_center
+
+
+def canonicalize_code_rows(bit_rows):
+    """把多行采样 bit 旋转归一化成最小整数对应的 bit 行。"""
+    bit_rows = np.asarray(bit_rows, dtype=np.uint8)
+    bit_count = bit_rows.shape[1]
+    weights = (1 << np.arange(bit_count, dtype=np.uint32))
+    rotations = bit_rows[:, rotation_indices(bit_count)]
+    values = np.sum(rotations * weights, axis=2)
+    best_rotation_indices = np.argmin(values, axis=1)
+    return rotations[np.arange(bit_rows.shape[0]), best_rotation_indices]
 
 
 def CCT_Decode(cct_binary, bit_count, color):
@@ -249,20 +271,18 @@ def CCT_Decode(cct_binary, bit_count, color):
     center_y = height / 2
     radius = center_x * 0.333333
 
-    sampled_codes = []
-    for offset in range(int(360 / bit_count)):
-        bits = []
-        for bit_index in range(bit_count):
-            angle = math.radians(360.0 / bit_count * bit_index + offset)
-            x = 2.5 * radius * math.cos(angle) + center_x
-            y = 2.5 * radius * math.sin(angle) + center_y
-            bits.append(sample_binary(cct_binary, x, y))
+    offsets = np.arange(int(360 / bit_count), dtype=np.float32)[:, None]
+    bit_indices = np.arange(bit_count, dtype=np.float32)[None, :]
+    angles = np.deg2rad(360.0 / bit_count * bit_indices + offsets)
+    sampled_bits = sample_binary_points(
+        cct_binary,
+        2.5 * radius * np.cos(angles) + center_x,
+        2.5 * radius * np.sin(angles) + center_y,
+    )
 
-        # 每一圈采样都先做旋转归一化，再参与平均，降低起始角误差影响。
-        sampled_codes.append(I2B(B2I(bits, bit_count), bit_count))
-
-    mean_code = np.mean(np.asarray(sampled_codes), axis=0)
-    result = [1 if value > 0.5 else 0 for value in mean_code]
+    # 每一圈采样都先做旋转归一化，再参与平均，降低起始角误差影响。
+    sampled_codes = canonicalize_code_rows(sampled_bits)
+    result = (np.mean(sampled_codes, axis=0) > 0.5).astype(np.uint8)
     if color == "black":
         result = swap0and1(result)
     return B2I(result, len(result))
@@ -270,4 +290,4 @@ def CCT_Decode(cct_binary, bit_count, color):
 
 def swap0and1(bits):
     """黑码白底时需要把采样结果反相。"""
-    return [0 if bit else 1 for bit in bits]
+    return 1 - np.asarray(bits, dtype=np.uint8)
