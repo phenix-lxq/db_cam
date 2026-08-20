@@ -4,12 +4,38 @@
 `CODES` 和 `add_target()`，因此删掉了原来的 Inkscape/PDFtk 批量导出代码。
 """
 
-import numpy as np
+import math
 
 import find_codes
 
 
 CODES = find_codes.generate_codes(14)
+SEGMENT_OVERLAP_DEGREES = 0.15
+
+
+def polar_point(x_center, y_center, radius, angle_degrees):
+    """把极坐标转换成 SVG 坐标。"""
+    angle = math.radians(angle_degrees)
+    return (
+        x_center + math.cos(angle) * radius,
+        y_center + math.sin(angle) * radius,
+    )
+
+
+def annular_sector_path(x_center, y_center, inner_radius, outer_radius, start_angle, end_angle):
+    """生成一个闭合的环形扇区 path，避免描边圆弧产生打印接缝。"""
+    outer_start = polar_point(x_center, y_center, outer_radius, start_angle)
+    outer_end = polar_point(x_center, y_center, outer_radius, end_angle)
+    inner_end = polar_point(x_center, y_center, inner_radius, end_angle)
+    inner_start = polar_point(x_center, y_center, inner_radius, start_angle)
+
+    return (
+        f"M {outer_start[0]} {outer_start[1]} "
+        f"A {outer_radius} {outer_radius} 0 0 1 {outer_end[0]} {outer_end[1]} "
+        f"L {inner_end[0]} {inner_end[1]} "
+        f"A {inner_radius} {inner_radius} 0 0 0 {inner_start[0]} {inner_start[1]} "
+        "Z"
+    )
 
 
 def add_target(x_center, y_center, dot_radius, code, code_num, first_segment, show_label=False):
@@ -18,23 +44,24 @@ def add_target(x_center, y_center, dot_radius, code, code_num, first_segment, sh
     参数单位由调用方的 SVG 坐标系决定。本项目使用 mm。
     """
     target_svg = f'<circle fill="#fff" cx="{x_center}" cy="{y_center}" r="{dot_radius}"/>\n'
-    target_svg += f'<g stroke="#fff" stroke-width="{dot_radius}" fill="none">\n'
+    target_svg += '<g fill="#fff" stroke="none">\n'
 
     for index in range(14):
         if not ((1 << (13 - index)) & code):
             continue
 
-        start_x = np.cos(np.deg2rad(360 / 14 * index)) * dot_radius * 2.5
-        start_y = np.sin(np.deg2rad(360 / 14 * index)) * dot_radius * 2.5
-        end_x = np.cos(np.deg2rad(360 / 14 * (index + 1))) * dot_radius * 2.5 - start_x
-        end_y = np.sin(np.deg2rad(360 / 14 * (index + 1))) * dot_radius * 2.5 - start_y
-        start_x += x_center
-        start_y += y_center
-        first_id = ' id="first"' if first_segment else ""
-        target_svg += (
-            f'<path fill="#fff" d="m{start_x} {start_y}'
-            f'a{dot_radius * 2.5} {dot_radius * 2.5} 0 0 1 {end_x} {end_y}"{first_id}/>\n'
+        start_angle = 360 / 14 * index - SEGMENT_OVERLAP_DEGREES
+        end_angle = 360 / 14 * (index + 1) + SEGMENT_OVERLAP_DEGREES
+        sector_path = annular_sector_path(
+            x_center,
+            y_center,
+            dot_radius * 2.0,
+            dot_radius * 3.0,
+            start_angle,
+            end_angle,
         )
+        first_id = ' id="first"' if first_segment else ""
+        target_svg += f'<path d="{sector_path}"{first_id}/>\n'
         first_segment = False
 
     target_svg += "</g>\n"

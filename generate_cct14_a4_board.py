@@ -18,6 +18,9 @@ MARKER_DIAMETER_MM = 40.0
 CENTER_SPACING_MM = 60.0
 BOARD_CENTER_X_MM = PAGE_WIDTH_MM / 2
 BOARD_CENTER_Y_MM = PAGE_HEIGHT_MM / 2
+BLACK_SQUARE_SIZE_MM = 200.0
+BLACK_SQUARE_X_MM = (PAGE_WIDTH_MM - BLACK_SQUARE_SIZE_MM) / 2
+BLACK_SQUARE_Y_MM = (PAGE_HEIGHT_MM - BLACK_SQUARE_SIZE_MM) / 2
 
 OUTPUT_SVG = PROJECT_DIR / "cct14_3x3_A4_60mm.svg"
 OUTPUT_PDF = PROJECT_DIR / "cct14_3x3_A4_60mm.pdf"
@@ -70,7 +73,10 @@ def create_svg():
         f'width="{PAGE_WIDTH_MM}mm" height="{PAGE_HEIGHT_MM}mm" '
         f'viewBox="0 0 {PAGE_WIDTH_MM} {PAGE_HEIGHT_MM}">',
         f'<rect width="{PAGE_WIDTH_MM}" height="{PAGE_HEIGHT_MM}" fill="#fff"/>',
-        '<rect x="5" y="5" width="200" height="247" fill="#000"/>',
+        (
+            f'<rect x="{BLACK_SQUARE_X_MM}" y="{BLACK_SQUARE_Y_MM}" '
+            f'width="{BLACK_SQUARE_SIZE_MM}" height="{BLACK_SQUARE_SIZE_MM}" fill="#000"/>'
+        ),
     ]
 
     first_segment = True
