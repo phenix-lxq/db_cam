@@ -1,0 +1,29 @@
+# Python cache / build output
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+build/
+dist/
+*.egg-info/
+
+# Virtual environments
+.venv/
+venv/
+env/
+db_cam_env/
+
+# Local editor state
+.vscode/
+.idea/
+
+# Runtime captures and calibration outputs
+captures/
+calibration_debug/
+stereo_cct14.yaml
+
+# Logs and OS metadata
+*.log
+.DS_Store
+Thumbs.db
