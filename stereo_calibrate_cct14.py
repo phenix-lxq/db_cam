@@ -41,6 +41,12 @@ def parse_args():
         help="候选中心圆的最小直径，单位像素",
     )
     parser.add_argument(
+        "--min-ring-transitions",
+        type=int,
+        default=4,
+        help="编码环圆周上最少需要的明暗跳变次数",
+    )
+    parser.add_argument(
         "--color",
         choices=("black", "white"),
         default="white",
@@ -112,7 +118,7 @@ def read_image(path):
     return image
 
 
-def decode_points(image, threshold, color, min_iou, min_center_diameter):
+def decode_points(image, threshold, color, min_iou, min_center_diameter, min_ring_transitions, valid_ids):
     """解码一张图片中的 CCT 点，并丢弃同一 ID 重复出现的点。"""
     decoded, annotated = CCT_extract(
         image.copy(),
@@ -121,6 +127,8 @@ def decode_points(image, threshold, color, min_iou, min_center_diameter):
         color,
         min_iou=min_iou,
         min_center_diameter=min_center_diameter,
+        min_ring_transitions=min_ring_transitions,
+        valid_ids=valid_ids,
     )
     grouped = {}
     for code_id, x, y in decoded:
@@ -151,6 +159,7 @@ def collect_views(pairs, layout, args):
     """把所有照片对转换成 OpenCV 标定需要的 3D-2D 点集。"""
     views = []
     image_size = None
+    valid_ids = set(layout.keys())
     args.debug_dir.mkdir(parents=True, exist_ok=True)
 
     for index, (name, left_path, right_path) in enumerate(pairs, start=1):
@@ -174,6 +183,8 @@ def collect_views(pairs, layout, args):
             args.color,
             args.min_iou,
             args.min_center_diameter,
+            args.min_ring_transitions,
+            valid_ids,
         )
         right_points, right_duplicates, right_debug = decode_points(
             right_image,
@@ -181,6 +192,8 @@ def collect_views(pairs, layout, args):
             args.color,
             args.min_iou,
             args.min_center_diameter,
+            args.min_ring_transitions,
+            valid_ids,
         )
         write_debug_image(args.debug_dir / f"left_{name}", left_debug)
         write_debug_image(args.debug_dir / f"right_{name}", right_debug)
@@ -218,6 +231,36 @@ def calculate_reprojection_error(object_points, image_points, rvecs, tvecs, came
     return float(np.sqrt(squared_error / point_count))
 
 
+def calculate_reprojection_error_with_solvepnp(object_points, image_points, camera_matrix, distortion):
+    """用给定内参重新估计每张图的位姿，再计算一致口径的重投影误差。"""
+    squared_error = 0.0
+    point_count = 0
+    for object_view, image_view in zip(object_points, image_points):
+        ok, rvec, tvec = cv2.solvePnP(
+            object_view,
+            image_view,
+            camera_matrix,
+            distortion,
+            flags=cv2.SOLVEPNP_ITERATIVE,
+        )
+        if not ok:
+            continue
+        projected, _ = cv2.projectPoints(
+            object_view,
+            rvec,
+            tvec,
+            camera_matrix,
+            distortion,
+        )
+        difference = image_view.reshape(-1, 2) - projected.reshape(-1, 2)
+        squared_error += float(np.sum(difference * difference))
+        point_count += len(object_view)
+
+    if point_count == 0:
+        return float("nan")
+    return float(np.sqrt(squared_error / point_count))
+
+
 def calibrate(views, image_size, fix_intrinsics):
     """先分别标定左右相机，再做双目标定和极线校正。"""
     object_points = [view.object_points for view in views]
@@ -240,6 +283,22 @@ def calibrate(views, image_size, fix_intrinsics):
         None,
         None,
         flags=calibration_flags,
+    )
+    left_independent_error = calculate_reprojection_error(
+        object_points,
+        left_points,
+        left_rvecs,
+        left_tvecs,
+        left_matrix,
+        left_distortion,
+    )
+    right_independent_error = calculate_reprojection_error(
+        object_points,
+        right_points,
+        right_rvecs,
+        right_tvecs,
+        right_matrix,
+        right_distortion,
     )
 
     stereo_flags = (
@@ -295,11 +354,13 @@ def calibrate(views, image_size, fix_intrinsics):
         "left_rms": left_rms,
         "right_rms": right_rms,
         "stereo_rms": stereo_rms,
-        "left_reprojection_error": calculate_reprojection_error(
-            object_points, left_points, left_rvecs, left_tvecs, left_matrix, left_distortion
+        "left_independent_reprojection_error": left_independent_error,
+        "right_independent_reprojection_error": right_independent_error,
+        "left_reprojection_error": calculate_reprojection_error_with_solvepnp(
+            object_points, left_points, left_matrix, left_distortion
         ),
-        "right_reprojection_error": calculate_reprojection_error(
-            object_points, right_points, right_rvecs, right_tvecs, right_matrix, right_distortion
+        "right_reprojection_error": calculate_reprojection_error_with_solvepnp(
+            object_points, right_points, right_matrix, right_distortion
         ),
         "left_camera_matrix": left_matrix,
         "left_distortion": left_distortion,
@@ -354,8 +415,10 @@ def main():
     baseline = float(np.linalg.norm(result["translation"]))
     print(f"\n标定完成: {args.output}")
     print(f"有效照片对: {len(views)}")
-    print(f"左相机重投影误差: {result['left_reprojection_error']:.4f} px")
-    print(f"右相机重投影误差: {result['right_reprojection_error']:.4f} px")
+    print(f"左相机单目标定误差: {result['left_independent_reprojection_error']:.4f} px")
+    print(f"右相机单目标定误差: {result['right_independent_reprojection_error']:.4f} px")
+    print(f"左相机最终内参误差: {result['left_reprojection_error']:.4f} px")
+    print(f"右相机最终内参误差: {result['right_reprojection_error']:.4f} px")
     print(f"双目标定 RMS: {result['stereo_rms']:.4f} px")
     print(f"双目基线: {baseline:.4f} mm（取决于布局文件单位）")
     print(f"解码标注图: {args.debug_dir}")

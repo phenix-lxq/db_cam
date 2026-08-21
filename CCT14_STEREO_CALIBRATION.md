@@ -69,7 +69,7 @@ python stereo_calibrate_cct14.py
 如果漏检或误检明显，可以调整：
 
 ```powershell
-python stereo_calibrate_cct14.py --threshold 0.9 --min-iou 0.75
+python stereo_calibrate_cct14.py --threshold 0.9 --min-iou 0.75 --min-ring-transitions 6
 ```
 
 输出文件：

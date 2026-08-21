@@ -15,6 +15,7 @@ from Support import my_getAffineTransform
 
 DEFAULT_MIN_ELLIPSE_IOU = 0.65
 DEFAULT_MIN_CENTER_DIAMETER = 10.0
+DEFAULT_MIN_RING_TRANSITIONS = 4
 
 
 def contour_circularity(area, perimeter):
@@ -75,6 +76,34 @@ def sample_binary_points(image, x_points, y_points):
     )
     samples[valid] = image[rows[valid], columns[valid]]
     return samples
+
+
+def sample_ring(image, center_x, center_y, radius, sample_count):
+    """沿指定半径的圆周做向量化采样。"""
+    angles = np.linspace(0.0, 2.0 * np.pi, sample_count, endpoint=False, dtype=np.float32)
+    return sample_binary_points(
+        image,
+        center_x + radius * np.cos(angles),
+        center_y + radius * np.sin(angles),
+    )
+
+
+def ring_transition_count(samples):
+    """统计圆周采样序列中的明暗跳变次数。"""
+    samples = np.asarray(samples, dtype=np.uint8)
+    return int(np.count_nonzero(samples != np.roll(samples, -1)))
+
+
+def ring_mean(binary, center_x, center_y, base_radius, radius_scales, sample_count=96):
+    """对多个同心圆采样，并返回整体白色像素比例。"""
+    angles = np.linspace(0.0, 2.0 * np.pi, sample_count, endpoint=False, dtype=np.float32)
+    radii = base_radius * np.asarray(radius_scales, dtype=np.float32)[:, None]
+    samples = sample_binary_points(
+        binary,
+        center_x + radii * np.cos(angles)[None, :],
+        center_y + radii * np.sin(angles)[None, :],
+    )
+    return float(np.mean(samples))
 
 
 def normalize_cct_roi(image, center_ellipse):
@@ -142,6 +171,8 @@ def CCT_extract(
     color="white",
     min_iou=DEFAULT_MIN_ELLIPSE_IOU,
     min_center_diameter=DEFAULT_MIN_CENTER_DIAMETER,
+    min_ring_transitions=DEFAULT_MIN_RING_TRANSITIONS,
+    valid_ids=None,
 ):
     """提取图像中的 CCT 编码点。
 
@@ -184,10 +215,13 @@ def CCT_extract(
         kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
         eroded = cv2.erode(normalized_binary, kernel)
 
-        if not CCT_or_not(eroded):
+        if not CCT_or_not(eroded, color, min_ring_transitions):
             continue
 
         code = CCT_Decode(eroded, bit_count, color)
+        if valid_ids is not None and code not in valid_ids:
+            continue
+
         center_x, center_y = center_ellipse[0]
         code_table.append([code, center_x, center_y])
 
@@ -218,39 +252,30 @@ def CCT_extract(
     return code_table, image
 
 
-def CCT_or_not(cct_binary):
+def CCT_or_not(cct_binary, color="white", min_ring_transitions=DEFAULT_MIN_RING_TRANSITIONS):
     """判断归一化后的候选区域是否具有 CCT 的中心圆和编码环结构。"""
-    sample_count = 36
+    sample_count = 96
     height, width = cct_binary.shape[:2]
     center_x = width / 2
     center_y = height / 2
     radius = center_x / 3.0
 
-    angles = np.deg2rad(np.arange(sample_count, dtype=np.float32) * 10.0)
-    unit_x = np.cos(angles)
-    unit_y = np.sin(angles)
-    inner_samples = sample_binary_points(
-        cct_binary,
-        center_x + 0.5 * radius * unit_x,
-        center_y + 0.5 * radius * unit_y,
-    )
-    middle_samples = sample_binary_points(
-        cct_binary,
-        center_x + 1.5 * radius * unit_x,
-        center_y + 1.5 * radius * unit_y,
-    )
-    outer_samples = sample_binary_points(
-        cct_binary,
-        center_x + 2.5 * radius * unit_x,
-        center_y + 2.5 * radius * unit_y,
-    )
+    center_ratio = ring_mean(cct_binary, center_x, center_y, radius, (0.30, 0.55, 0.80), sample_count)
+    gap_ratio = ring_mean(cct_binary, center_x, center_y, radius, (1.20, 1.45, 1.70), sample_count)
+    code_ring = sample_ring(cct_binary, center_x, center_y, radius * 2.5, sample_count)
+    code_ratio = float(np.mean(code_ring))
+    transitions = ring_transition_count(code_ring)
 
-    inner_sum = int(np.sum(inner_samples))
-    middle_sum = int(np.sum(middle_samples))
-    outer_sum = int(np.sum(outer_samples))
-    white_center = inner_sum == sample_count and middle_sum == 0 and outer_sum >= 2
-    black_center = inner_sum == 0 and middle_sum == sample_count and outer_sum <= sample_count - 2
-    return white_center or black_center
+    if color == "white":
+        center_ok = center_ratio >= 0.90
+        gap_ok = gap_ratio <= 0.10
+    else:
+        center_ok = center_ratio <= 0.10
+        gap_ok = gap_ratio >= 0.90
+
+    code_ring_is_mixed = 0.12 <= code_ratio <= 0.88
+    code_ring_has_segments = transitions >= min_ring_transitions
+    return center_ok and gap_ok and code_ring_is_mixed and code_ring_has_segments
 
 
 def canonicalize_code_rows(bit_rows):

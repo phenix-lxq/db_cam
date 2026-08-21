@@ -71,7 +71,7 @@ python stereo_calibrate_cct14.py
 如果现场误检较多，可以调高候选约束：
 
 ```powershell
-python stereo_calibrate_cct14.py --threshold 0.9 --min-iou 0.75
+python stereo_calibrate_cct14.py --threshold 0.9 --min-iou 0.75 --min-ring-transitions 6
 ```
 
 更详细的流程见 `CCT14_STEREO_CALIBRATION.md`，项目结构见 `PROJECT_STRUCTURE.md`。

@@ -21,6 +21,7 @@ db_cam_env/
 # Runtime captures and calibration outputs
 captures/
 calibration_debug/
+depth_outputs/
 stereo_cct14.yaml
 
 # Logs and OS metadata
